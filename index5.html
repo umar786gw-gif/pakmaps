@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PakMaps 3D Demo</title>
+<style>
+  html, body { margin: 0; height: 100%; font-family: sans-serif; }
+  #map { position: absolute; inset: 0; }
+  #bar { position: absolute; top: 10px; left: 10px; right: 10px; z-index: 5; display: flex; gap: 6px; flex-wrap: wrap; }
+  #bar button { padding: 8px 12px; border: 0; border-radius: 8px; background: #fff; color:#000; font-size: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+  #status { position: absolute; bottom: 10px; left: 10px; right: 10px; z-index: 5; background: rgba(0,0,0,.8); color: #fff;
+            padding: 10px; border-radius: 8px; font-size: 13px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div id="bar"></div>
+<div id="map"></div>
+<div id="status">Starting...</div>
+<script>
+const st = document.getElementById("status");
+const log = m => { st.textContent += "\n" + m; };
+window.onerror = (m) => log("JS error: " + m);
+
+function loadScript(url) {
+  return new Promise((ok, fail) => {
+    const s = document.createElement("script");
+    s.src = url; s.onload = ok; s.onerror = () => fail(new Error("blocked: " + url));
+    document.head.appendChild(s);
+  });
+}
+function loadCss(url) {
+  const l = document.createElement("link"); l.rel = "stylesheet"; l.href = url; document.head.appendChild(l);
+}
+
+const PLACES = {
+  "Faizabad": [73.0833, 33.6607],
+  "Kashmir Hwy": [73.0590, 33.6930],
+  "IJP Road": [73.0700, 33.6400],
+  "Blue Area": [73.0930, 33.7100],
+  "Saddar": [73.0430, 33.5960]
+};
+
+(async () => {
+  const bases = ["https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/", "https://unpkg.com/maplibre-gl@4.7.1/dist/"];
+  let loaded = false;
+  for (const b of bases) {
+    try { loadCss(b + "maplibre-gl.css"); await loadScript(b + "maplibre-gl.js"); loaded = true; break; }
+    catch (e) { log(e.message); }
+  }
+  if (!loaded || typeof maplibregl === "undefined") {
+    log("Map library could not load. Are you opening this from the Claude preview? Save the file and open it from Downloads.");
+    return;
+  }
+  log("Library OK. Loading map...");
+  fetch("https://tiles.openfreemap.org/planet").then(r => r.json()).then(j => {
+    log("TileJSON OK");
+    const u = j.tiles[0].replace("{z}", 14).replace("{x}", 11517).replace("{y}", 6563);
+    return fetch(u).then(r => r.arrayBuffer().then(b => log("Test tile HTTP " + r.status + ", " + b.byteLength + " bytes")));
+  }).catch(e => log("Network test FAILED: " + e.message));
+  setTimeout(() => log("Still waiting after 20s (map not loaded)"), 20000);
+  const map = new maplibregl.Map({
+    container: "map",
+    style: "https://tiles.openfreemap.org/styles/liberty",
+    center: PLACES["Faizabad"], zoom: 16, pitch: 60, bearing: -20, maxPitch: 85
+  });
+  map.addControl(new maplibregl.NavigationControl());
+  map.on("error", e => log("Map error: " + (e.error && e.error.message)));
+  map.on("load", () => {
+    log("Map loaded.");
+    try {
+      const style = map.getStyle();
+      const src = Object.keys(style.sources)[0];
+      const firstSymbol = style.layers.find(l => l.type === "symbol");
+      style.layers.filter(l => l["source-layer"] === "building" && l.type !== "fill-extrusion")
+                  .forEach(l => map.removeLayer(l.id));
+      map.addLayer({
+        id: "b3d", type: "fill-extrusion", source: src, "source-layer": "building", minzoom: 14,
+        paint: {
+          "fill-extrusion-color": "#cfc9bf",
+          "fill-extrusion-height": ["coalesce", ["get", "render_height"], 9],
+          "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
+          "fill-extrusion-opacity": 0.92
+        }
+      }, firstSymbol && firstSymbol.id);
+      log("3D buildings on.");
+    } catch (e) { log("3D error: " + e.message); }
+
+  });
+  const bar = document.getElementById("bar");
+  Object.entries(PLACES).forEach(([n, c]) => {
+    const b = document.createElement("button"); b.textContent = n;
+    b.onclick = () => map.flyTo({ center: c, zoom: 16.5, pitch: 60, bearing: -20, duration: 2500 });
+    bar.appendChild(b);
+  });
+})();
+</script>
+</body>
+</html>
