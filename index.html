@@ -89,8 +89,10 @@ const PLACES = {
       map.addSource("bridges3d", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
       map.addLayer({
         id: "bridges3d", type: "fill-extrusion", source: "bridges3d", minzoom: 15,
-        paint: { "fill-extrusion-color": "#8a8a8a", "fill-extrusion-base": 5,
-                 "fill-extrusion-height": 6.5, "fill-extrusion-opacity": 0.97 }
+        paint: { "fill-extrusion-color": ["case", ["==", ["get", "pillar"], 1], "#b9b6ae", "#5b5b5f"],
+                 "fill-extrusion-base": ["coalesce", ["get", "b"], 5],
+                 "fill-extrusion-height": ["coalesce", ["get", "h"], 6.5],
+                 "fill-extrusion-opacity": 0.97 }
       });
       map.addLayer({
         id: "tunnels-hl", type: "line", source: src, "source-layer": "transportation", minzoom: 14,
@@ -111,8 +113,19 @@ const PLACES = {
           seen.add(k);
           const c = f.properties.class;
           const w = (c === "motorway" || c === "trunk") ? 9 : (c === "primary" || c === "secondary") ? 7 : 5;
-          try { const p = turf.buffer(f, w / 2, { units: "meters" }); if (p) out.push(p); } catch (e) {}
-          if (out.length > 500) break;
+          try {
+            const p = turf.buffer(f, w / 2, { units: "meters" });
+            if (p) { p.properties = { b: 5, h: 6.5, pillar: 0 }; out.push(p); }
+            if (f.geometry.type === "LineString") {
+              const L = turf.length(f, { units: "meters" });
+              for (let d = 10; d < L - 5 && out.length < 1500; d += 22) {
+                const pt = turf.along(f, d, { units: "meters" });
+                const sq = turf.buffer(pt, 1.3, { units: "meters", steps: 4 });
+                if (sq) { sq.properties = { b: 0, h: 5, pillar: 1 }; out.push(sq); }
+              }
+            }
+          } catch (e) {}
+          if (out.length > 1500) break;
         }
         map.getSource("bridges3d").setData({ type: "FeatureCollection", features: out });
       };
