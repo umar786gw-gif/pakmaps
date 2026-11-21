@@ -53,6 +53,8 @@ const PLACES = {
     return;
   }
   log("Library OK. Loading map...");
+  try { await loadScript("https://cdn.jsdelivr.net/npm/@turf/turf@6.5.0/turf.min.js"); }
+  catch (e) { log("Turf not loaded, bridges disabled"); }
   fetch("https://tiles.openfreemap.org/planet").then(r => r.json()).then(j => {
     log("TileJSON OK");
     const u = j.tiles[0].replace("{z}", 14).replace("{x}", 11517).replace("{y}", 6563);
@@ -84,6 +86,39 @@ const PLACES = {
         }
       }, firstSymbol && firstSymbol.id);
       log("3D buildings on.");
+      map.addSource("bridges3d", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      map.addLayer({
+        id: "bridges3d", type: "fill-extrusion", source: "bridges3d", minzoom: 15,
+        paint: { "fill-extrusion-color": "#8a8a8a", "fill-extrusion-base": 5,
+                 "fill-extrusion-height": 6.5, "fill-extrusion-opacity": 0.97 }
+      });
+      map.addLayer({
+        id: "tunnels-hl", type: "line", source: src, "source-layer": "transportation", minzoom: 14,
+        filter: ["==", ["get", "brunnel"], "tunnel"],
+        paint: { "line-color": "#1d4ed8", "line-width": 4, "line-dasharray": [2, 2], "line-opacity": 0.8 }
+      });
+      let timer;
+      const refresh = () => {
+        if (typeof turf === "undefined" || map.getZoom() < 15) return;
+        const seen = new Set(), out = [];
+        const feats = map.querySourceFeatures(src, {
+          sourceLayer: "transportation", filter: ["==", ["get", "brunnel"], "bridge"]
+        });
+        for (const f of feats) {
+          if (!f.geometry || !/LineString/.test(f.geometry.type)) continue;
+          const k = JSON.stringify(f.geometry.coordinates[0]) + f.geometry.coordinates.length;
+          if (seen.has(k)) continue;
+          seen.add(k);
+          const c = f.properties.class;
+          const w = (c === "motorway" || c === "trunk") ? 9 : (c === "primary" || c === "secondary") ? 7 : 5;
+          try { const p = turf.buffer(f, w / 2, { units: "meters" }); if (p) out.push(p); } catch (e) {}
+          if (out.length > 500) break;
+        }
+        map.getSource("bridges3d").setData({ type: "FeatureCollection", features: out });
+      };
+      map.on("moveend", () => { clearTimeout(timer); timer = setTimeout(refresh, 300); });
+      map.once("idle", refresh);
+      log("Bridge + tunnel layers ready.");
     } catch (e) { log("3D error: " + e.message); }
 
   });
