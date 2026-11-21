@@ -158,6 +158,67 @@ const PLACES = {
       map.on("moveend", () => { clearTimeout(timer); timer = setTimeout(refresh, 300); });
       map.once("idle", refresh);
       log("Bridge + tunnel layers ready.");
+
+      // ---- Routing demo: tap start, tap destination, press Drive ----
+      let pts = [], markers = [], route = null, driving = false;
+      map.addSource("route", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+      map.addLayer({
+        id: "route-line", type: "line", source: "route",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: { "line-color": "#2563eb", "line-width": 7, "line-opacity": 0.85 }
+      });
+      const clearAll = () => {
+        driving = false; pts = []; route = null;
+        markers.forEach(m => m.remove()); markers = [];
+        map.getSource("route").setData({ type: "FeatureCollection", features: [] });
+      };
+      map.on("click", async (e) => {
+        if (driving) return;
+        if (pts.length >= 2) clearAll();
+        pts.push([e.lngLat.lng, e.lngLat.lat]);
+        markers.push(new maplibregl.Marker({ color: pts.length === 1 ? "#16a34a" : "#dc2626" })
+          .setLngLat(pts[pts.length - 1]).addTo(map));
+        st.style.display = "block";
+        if (pts.length === 1) { st.textContent = "Start set. Tap the map again for the destination."; return; }
+        st.textContent = "Finding route...";
+        try {
+          const u = "https://router.project-osrm.org/route/v1/driving/" + pts[0].join(",") + ";" +
+                    pts[1].join(",") + "?overview=full&geometries=geojson";
+          const r = await (await fetch(u)).json();
+          if (!r.routes || !r.routes.length) throw new Error(r.code || "no route found");
+          route = r.routes[0].geometry;
+          map.getSource("route").setData({ type: "Feature", geometry: route });
+          st.textContent = "Route: " + (r.routes[0].distance / 1000).toFixed(1) + " km, about " +
+                           Math.round(r.routes[0].duration / 60) + " min. Tap Drive.";
+        } catch (err) { st.textContent = "Routing failed: " + err.message; }
+      });
+      const mk = (label, fn) => {
+        const b = document.createElement("button"); b.textContent = label; b.onclick = fn;
+        document.getElementById("bar").appendChild(b);
+      };
+      mk("Drive", () => {
+        if (!route || driving) return;
+        driving = true; st.style.display = "none";
+        const line = { type: "Feature", geometry: route };
+        const total = turf.length(line, { units: "meters" });
+        let d = 0, last = performance.now(), lastRefresh = 0, brg = null;
+        const step = (now) => {
+          if (!driving) return;
+          d += 35 * ((now - last) / 1000); last = now;   // 35 m/s demo speed
+          if (d >= total) { driving = false; return; }
+          const a = turf.along(line, d, { units: "meters" }).geometry.coordinates;
+          const b = turf.along(line, Math.min(d + 40, total), { units: "meters" }).geometry.coordinates;
+          const target = turf.bearing(a, b);
+          if (brg === null) brg = target;
+          brg += (((target - brg + 540) % 360) - 180) * 0.1;
+          map.jumpTo({ center: a, bearing: brg, pitch: 72, zoom: 17.3 });
+          if (now - lastRefresh > 1500) { lastRefresh = now; refresh(); }
+          requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+      });
+      mk("Clear", clearAll);
+      log("Tap map: start, then destination.");
     } catch (e) { log("3D error: " + e.message); }
 
   });
